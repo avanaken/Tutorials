@@ -1,0 +1,111 @@
+import pandas as pd
+import subprocess
+import time
+import os
+from selenium import webdriver
+from selenium.webdriver.common.keys import Keys
+from selenium.webdriver.chrome.options import Options
+
+import re
+from bs4 import BeautifulSoup
+import time
+import datetime as dt
+now = dt.datetime.now()
+
+chrome_options = Options()
+chrome_options.add_argument("--headless")
+driver = webdriver.Chrome(chrome_options=chrome_options)
+driver.set_window_size(1024, 768)
+
+
+driver.get("https://www.psacard.com/auctionprices/basketball-cards/1986-fleer/michael-jordan/values/299576")
+
+
+html_source = driver.page_source
+driver.quit()
+soup = BeautifulSoup(html_source)
+
+#Get players and delete punctuation
+players = soup.find_all("div", {"class": "item-lots-summary result-table result-table-sortable"})
+
+
+strplayers = str(players)
+#strplayers = strplayers.replace('<span class="desktop-name">', '')
+date = re.findall(r'(?<=item-date">)[^<]+',strplayers)
+price = re.findall(r'(?<=item-price">)[^<]+',strplayers)
+grade = re.findall(r'(?<=data-gradevalue=")[^"]+',strplayers)
+auction_name = re.findall(r'(?<=item-auctionname">)[^<]+',strplayers)
+
+newpd = pd.DataFrame(date, columns=['date'])
+newpd['price'] = price
+newpd['grade'] = grade
+newpd['auction_name'] = auction_name
+newpd.to_csv('mj_rook.csv')
+
+findplayers = re.findall(r'(?<=item-lot">)[^<]+',strplayers)
+findplayers = re.findall(r'(?<=item-auctionhouse">)[^<]+',strplayers)
+findplayers = re.findall(r'(?<=item-auctioname">)[^<]+',strplayers)
+findplayers = re.findall(r'(?<=item-cert">)[^<]+',strplayers)
+
+
+
+
+pos = str(re.findall(r'(?<=target="_blank">).+',strplayers))
+pos = re.findall(r'(?<=</a>)[^<]+',pos)
+
+#Get Team data and remove puncutation
+newsoup = str(soup)
+bteamname = re.findall(r'</svg>\n.+', newsoup)
+bteamname = str(bteamname)
+bteamname = re.findall(r'(?<=<div>).+?(?=<)',bteamname)
+hax = []
+for item in bteamname:
+    hax.append([item] * 9)
+
+flatten = lambda l: [item for sublist in l for item in sublist]
+
+newpd = pd.DataFrame(findplayers, columns=['player'])
+newpd['pos'] = pos
+
+
+newpd[['extra','hand','position']] = newpd['pos'].str.split(' ',expand=True)
+newpd = newpd.drop(columns=['pos','extra'],axis=1)
+newpd['team'] = flatten(hax)
+newpd['border'] = [i for i in range(1,10)] * int(newpd.shape[0]/9)
+newpd['home_away'] = ([1] * 9 + [2] * 9) * int(newpd.shape[0]/18)
+newpd['date'] = str(now.year) + '-' + str(now.day) + '-' + str(now.month)
+newfield = [[1,'P'],[2,'C'],[3,'1B'],[4,'2B'],[5,'3B'],[6,'SS'],[7,'LF'],[8,'CF'],[9,'RF']]
+
+gamenum = []
+gamenumber = 1
+for x in range(1, len(findplayers)):
+        if x % 18 != 0:
+            gamenum.append(gamenumber)
+        else:
+            gamenum.append(gamenumber)
+            gamenumber += 1
+gamenum.append(max(gamenum))
+newpd['gamenum'] = gamenum
+
+newfield = pd.DataFrame(newfield,columns=['number','position'])
+newpd = newpd.merge(newfield,on='position', how ='outer')
+
+newpd = newpd.sort_values(by=['gamenum','home_away','border'])
+newpd = newpd.fillna(0)
+newpd.to_csv('bat_pd'+str(dt.date.today().year)+'-'+str(dt.date.today().month)+'-'+str(dt.date.today().day)+'.csv',index=False)
+
+#Get pitcher info
+players = soup.find_all("div", {"class": "col col--min player"})
+strplayers = str(players)
+strplayers = re.sub('\d','',strplayers)
+
+findplayers = re.findall(r'(?<=razzball.com/player/)[^"]+',strplayers)
+
+pitchpd = pd.DataFrame(findplayers, columns=['players'])
+pitchpd['players'] = pitchpd.players.str.replace('/','')
+pitchpd['players'] = pitchpd.players.str.replace('+',' ')
+pitchpd['team'] = bteamname
+pitchpd['date'] = str(now.year) + '-' + str(now.day) + '-' + str(now.month)
+pitchpd = pitchpd.merge(newpd[['team','gamenum']],on='team')
+pitchpd = pitchpd.drop_duplicates()
+pitchpd.to_csv('pitch_pd'+str(dt.date.today().year)+'-'+str(dt.date.today().month)+'-'+str(dt.date.today().day)+'.csv',index=False)
